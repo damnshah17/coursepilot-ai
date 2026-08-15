@@ -1,0 +1,213 @@
+name: coursepilot-ai
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg17
+    container_name: coursepilot-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      - coursepilot_postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - coursepilot_network
+
+  redis:
+    image: redis:8.10.0-alpine
+    container_name: coursepilot-redis
+    restart: unless-stopped
+
+    command:
+      [
+        "redis-server",
+        "/usr/local/etc/redis/redis.conf",
+      ]
+
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+
+    volumes:
+      - coursepilot_redis_data:/data
+      - ./infrastructure/docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+    networks:
+      - coursepilot_network
+
+  mailpit:
+    image: axllent/mailpit:v1.30.5
+    container_name: coursepilot-mailpit
+    restart: unless-stopped
+
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+
+    ports:
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+
+    volumes:
+      - coursepilot_mailpit_data:/data
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/mailpit",
+          "readyz",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+    networks:
+      - coursepilot_network
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+
+    container_name: coursepilot-api
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      API_PREFIX: /api
+      WEB_ORIGIN: http://localhost:8080
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://${POSTGRES_USER:-coursepilot}:${POSTGRES_PASSWORD:-coursepilot_dev_password}@postgres:5432/${POSTGRES_DB:-coursepilot}
+      REDIS_URL: redis://redis:6379
+
+    ports:
+      - "127.0.0.1:4000:4000"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    networks:
+      - coursepilot_network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/api/health/ready').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+
+    container_name: coursepilot-worker
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      REDIS_URL: redis://redis:6379
+      WORKER_CONCURRENCY: 5
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    networks:
+      - coursepilot_network
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+
+      args:
+        VITE_API_BASE_URL: http://localhost:4000/api
+
+    container_name: coursepilot-web
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:8080:80"
+
+    depends_on:
+      api:
+        condition: service_healthy
+
+    networks:
+      - coursepilot_network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  coursepilot_postgres_data:
+    name: coursepilot_postgres_data
+
+  coursepilot_redis_data:
+    name: coursepilot_redis_data
+
+  coursepilot_mailpit_data:
+    name: coursepilot_mailpit_data
+
+networks:
+  coursepilot_network:
+    name: coursepilot_network
+    driver: bridge

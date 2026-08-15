@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Runtime files
+*.pid
+*.pid.lock
+
+# Local uploads
+uploads/*
+!uploads/.gitkeep
+
+# Prisma generated files
+generated/
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite
+.vite/
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker
+docker-data/
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
